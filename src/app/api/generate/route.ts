@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import Replicate from 'replicate';
 
 export async function POST(request: Request) {
   try {
@@ -29,69 +30,44 @@ export async function POST(request: Request) {
       });
     }
 
-    // --- REAL IMPLEMENTATION (Banana API) ---
-    // 1. Call Banana to start the task
-    const apiKey = process.env.BANANA_API_KEY;
-    const modelKey = process.env.BANANA_MODEL_KEY;
-
-    if (!apiKey || !modelKey) {
-      throw new Error("Missing Banana API configuration");
-    }
-
-    const startResponse = await fetch("https://api.banana.dev/start/v4/", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        apiKey: apiKey,
-        modelKey: modelKey,
-        modelInputs: {
-          prompt: "luxury backyard with a swimming pool, photorealistic, 8k",
-          image_base64: image, // Assuming model expects this
-          negative_prompt: "text, watermark, ugly, deformed",
-        },
-      }),
+    // --- REAL IMPLEMENTATION (Replicate API) ---
+    const replicate = new Replicate({
+      auth: process.env.REPLICATE_API_TOKEN,
     });
 
-    const startData = await startResponse.json();
-    const callID = startData.callID;
-
-    // 2. Poll for results (Simple polling implementation)
-    // In a real app, you might want to return the callID to the client and let the client poll
-    // to avoid serverless timeout limits. But for simplicity here, we poll.
-    
-    let attempts = 0;
-    while (attempts < 30) { // Max 30 attempts (approx 30-60s)
-      const checkResponse = await fetch("https://api.banana.dev/check/v4/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          apiKey: apiKey,
-          callID: callID,
-        }),
-      });
-      
-      const checkData = await checkResponse.json();
-      
-      if (checkData.status === "Success") {
-        return NextResponse.json({
-          result: checkData.modelOutputs[0].image_base64, // Adjust based on model output format
-          status: 'completed'
-        });
-      } else if (checkData.status === "Failed") {
-         throw new Error("Model inference failed");
-      }
-      
-      // Wait 1s before next poll
-      await new Promise(r => setTimeout(r, 1000));
-      attempts++;
+    if (!process.env.REPLICATE_API_TOKEN) {
+      throw new Error("Missing Replicate API configuration");
     }
 
-    return NextResponse.json(
-      { error: 'Timeout waiting for model' },
-      { status: 504 }
+    // Using ControlNet for structural consistency (preserving the yard layout)
+    // Model: jagilley/controlnet-hough
+    const output = await replicate.run(
+      "jagilley/controlnet-hough:854e8727697a057c525cdb45ab037f64ecca770a1769cc52287c2e56472a247b",
+      {
+        input: {
+          image: image,
+          prompt: "luxury backyard with a modern swimming pool, blue water, sunny day, photorealistic, 8k, high quality",
+          eta: 0,
+          scale: 9,
+          a_prompt: "best quality, extremely detailed",
+          n_prompt: "longbody, lowres, bad anatomy, bad hands, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality",
+          ddim_steps: 20,
+          num_samples: "1",
+          image_resolution: "512",
+          detect_resolution: "512",
+          value_threshold: "0.1",
+          distance_threshold: "0.1"
+        }
+      }
     );
+
+    // Replicate returns an array of image URLs
+    const resultImage = (output as string[])[1]; // Index 1 usually contains the generated image (Index 0 might be the edge map)
+
+    return NextResponse.json({
+      result: resultImage,
+      status: 'completed'
+    });
 
   } catch (error) {
     console.error('Generation error:', error);
