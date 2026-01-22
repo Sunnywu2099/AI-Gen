@@ -22,27 +22,65 @@ function DesignPoolApp() {
       setStatus('uploading');
       setErrorMsg('');
 
-      // Convert file to base64
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64String = reader.result as string;
-        setOriginalImage(base64String);
+      // Resize image if too large (client-side) to avoid Vercel 4.5MB payload limit
+      const resizedBase64 = await resizeImage(file);
+      setOriginalImage(resizedBase64);
         
-        // Start generation
-        await generateDesign(base64String);
-      };
-      reader.readAsDataURL(file);
+      // Start generation
+      await generateDesign(resizedBase64);
     } catch (error) {
       console.error(error);
       setStatus('error');
-      setErrorMsg(dict.error);
+      setErrorMsg((error as Error).message || dict.error);
     }
+  };
+
+  const resizeImage = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          
+          // Max dimension 1024px is usually enough for ControlNet and keeps size low
+          const MAX_DIM = 1024;
+          if (width > height) {
+            if (width > MAX_DIM) {
+              height *= MAX_DIM / width;
+              width = MAX_DIM;
+            }
+          } else {
+            if (height > MAX_DIM) {
+              width *= MAX_DIM / height;
+              height = MAX_DIM;
+            }
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+          
+          // Use JPEG with 0.8 quality to reduce size
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+          resolve(dataUrl);
+        };
+        img.onerror = (err) => reject(err);
+      };
+      reader.onerror = (err) => reject(err);
+    });
   };
 
   const generateDesign = async (base64Image: string) => {
     try {
       setStatus('processing');
       
+      // 1. Start prediction
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: {
@@ -54,16 +92,49 @@ function DesignPoolApp() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'Generation failed');
+        throw new Error(data.error || 'Failed to start generation');
       }
 
-      setGeneratedImage(data.result);
-      setStatus('completed');
+      const predictionId = data.id;
+      
+      // 2. Poll for result
+      await pollPrediction(predictionId);
+
     } catch (error) {
       console.error(error);
       setStatus('error');
-      setErrorMsg(dict.error);
+      setErrorMsg((error as Error).message || dict.error);
     }
+  };
+
+  const pollPrediction = async (id: string) => {
+    let attempts = 0;
+    const maxAttempts = 60; // 60 seconds max polling
+
+    while (attempts < maxAttempts) {
+      const response = await fetch(`/api/poll?id=${id}`);
+      const data = await response.json();
+
+      if (response.status !== 200) {
+        throw new Error(data.error || 'Polling failed');
+      }
+
+      if (data.status === 'succeeded') {
+        // Replicate output is usually an array [edge_map, generated_image] or just image
+        const result = Array.isArray(data.output) ? data.output[1] || data.output[0] : data.output;
+        setGeneratedImage(result);
+        setStatus('completed');
+        return;
+      } else if (data.status === 'failed' || data.status === 'canceled') {
+        throw new Error(data.error || 'Generation failed');
+      }
+
+      // Wait 1 second before next poll
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      attempts++;
+    }
+
+    throw new Error('Generation timed out');
   };
 
   const handleReset = () => {
@@ -97,7 +168,7 @@ function DesignPoolApp() {
                 <div className="absolute inset-0 border-4 border-blue-500 rounded-full border-t-transparent animate-spin"></div>
               </div>
               <h3 className="text-xl font-semibold text-gray-700 animate-pulse">
-                {dict.processing}
+                {status === 'uploading' ? 'Uploading...' : dict.processing}
               </h3>
             </div>
           )}
