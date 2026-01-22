@@ -8,7 +8,7 @@ This is a Next.js application designed to be embedded into your e-commerce sites
 - **Drag & Drop Upload:** Easy interface for users.
 - **Side-by-Side Comparison:** View original and generated images.
 - **Downloadable Result:** Users can save the design.
-- **Replicate API Integration:** Uses ControlNet for high-quality structural edits.
+- **Hybrid API Support:** Supports both Replicate and Banana API (configurable).
 
 ## Getting Started
 
@@ -31,8 +31,12 @@ This is a Next.js application designed to be embedded into your e-commerce sites
 
    | Variable | Description |
    |---|---|
-   | `REPLICATE_API_TOKEN` | Your Replicate API Token (from replicate.com) |
+   | `BANANA_API_KEY` | Your Banana API Key |
+   | `BANANA_MODEL_KEY` | Your Banana Model Key |
    | `MOCK_MODE` | Set to `false` to use real API. Default is `true` (mock). |
+
+   *(Optional if using Replicate instead)*
+   | `REPLICATE_API_TOKEN` | Your Replicate API Token |
 
 ## Embedding (Iframe)
 

@@ -98,7 +98,9 @@ function DesignPoolApp() {
       const predictionId = data.id;
       
       // 2. Poll for result
-      await pollPrediction(predictionId);
+      // If provider is returned, use it to decide how to poll
+      const provider = data.provider || 'replicate'; 
+      await pollPrediction(predictionId, provider);
 
     } catch (error) {
       console.error(error);
@@ -107,12 +109,12 @@ function DesignPoolApp() {
     }
   };
 
-  const pollPrediction = async (id: string) => {
+  const pollPrediction = async (id: string, provider: string) => {
     let attempts = 0;
     const maxAttempts = 60; // 60 seconds max polling
 
     while (attempts < maxAttempts) {
-      const response = await fetch(`/api/poll?id=${id}`);
+      const response = await fetch(`/api/poll?id=${id}&provider=${provider}`);
       const data = await response.json();
 
       if (response.status !== 200) {
@@ -120,9 +122,18 @@ function DesignPoolApp() {
       }
 
       if (data.status === 'succeeded') {
+        // Replicate/Banana output handling
+        // Banana often returns just the image base64 in output
         // Replicate output is usually an array [edge_map, generated_image] or just image
         const result = Array.isArray(data.output) ? data.output[1] || data.output[0] : data.output;
-        setGeneratedImage(result);
+        
+        // Handle base64 prefix if missing (Banana sometimes returns raw base64)
+        let finalImage = result;
+        if (provider === 'banana' && !result.startsWith('http') && !result.startsWith('data:image')) {
+            finalImage = `data:image/png;base64,${result}`;
+        }
+        
+        setGeneratedImage(finalImage);
         setStatus('completed');
         return;
       } else if (data.status === 'failed' || data.status === 'canceled') {
